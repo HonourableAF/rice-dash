@@ -1,5 +1,7 @@
 # rice-dash
 
+![rice-dash overlay](screenshots/overlay.png)
+
 A Nord-themed system dashboard for Linux, in two flavours:
 
 - **`dash.py`** is a terminal dashboard (TUI) built with [Textual](https://textual.textualize.io/). Run it in a terminal pane.
