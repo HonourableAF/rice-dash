@@ -198,8 +198,13 @@ PanelWindow {
         anchors.fill: parent
         focus: true
         Component.onCompleted: forceActiveFocus()
-        Keys.onEscapePressed: win.dismiss()
-        Keys.onPressed: function(e) { if (e.key === Qt.Key_Q) win.dismiss() }
+        Keys.onPressed: function(e) {
+            if (e.key === Qt.Key_Escape || e.key === Qt.Key_Q) win.dismiss()
+            else if (e.key === Qt.Key_Up) procList.nudge(-procList.rowStep)
+            else if (e.key === Qt.Key_Down) procList.nudge(procList.rowStep)
+            else return
+            e.accepted = true
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -509,31 +514,63 @@ PanelWindow {
                 }
 
                 Card {
-                    order: 4; title: "TOP PROCESSES"; u: stage.u; open: win.open
+                    order: 4; title: "PROCESSES  ·  " + win.d.procs.length; u: stage.u; open: win.open
                     x: 3 * (cards.cw + stage.gap); y: cards.height * 0.46 + stage.gap
                     width: cards.cw; height: cards.height - cards.height * 0.46 - stage.gap
-                    Column {
-                        width: parent.width
+                    ListView {
+                        id: procList
+                        anchors.fill: parent
+                        clip: true
+                        interactive: false
                         spacing: 7 * stage.u
-                        Repeater {
-                            model: win.d.procs.length
-                            delegate: Item {
-                                width: parent.width; height: 24 * stage.u
-                                Text {
-                                    width: parent.width * 0.58; elide: Text.ElideRight; text: win.d.procs[index].name
-                                    color: "#d8dee9"; font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u
-                                }
-                                Text {
-                                    anchors.right: memT.left; anchors.rightMargin: 16 * stage.u
-                                    text: win.d.procs[index].cpu; color: win.heat(win.d.procs[index].frac)
-                                    font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u; font.bold: true
-                                }
-                                Text {
-                                    id: memT; anchors.right: parent.right; text: win.d.procs[index].mem; color: "#7b88a1"
-                                    font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u
-                                }
+                        model: win.d.procs.length
+                        readonly property real rowStep: 24 * stage.u + spacing
+
+                        function nudge(dy) {
+                            var maxY = Math.max(0, contentHeight - height)
+                            var base = scrollAnim.running ? scrollAnim.to : contentY
+                            var target = Math.max(0, Math.min(maxY, base + dy))
+                            scrollAnim.stop()
+                            scrollAnim.from = contentY
+                            scrollAnim.to = target
+                            scrollAnim.start()
+                        }
+
+                        delegate: Item {
+                            id: row
+                            width: procList.width - 12 * stage.u; height: 24 * stage.u
+                            property var p: win.d.procs[index] || ({ name: "", cpu: "", mem: "", frac: 0 })
+                            Text {
+                                width: parent.width * 0.58; elide: Text.ElideRight; text: row.p.name
+                                color: "#d8dee9"; font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u
+                            }
+                            Text {
+                                anchors.right: memT.left; anchors.rightMargin: 16 * stage.u
+                                text: row.p.cpu; color: win.heat(row.p.frac)
+                                font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u; font.bold: true
+                            }
+                            Text {
+                                id: memT; anchors.right: parent.right; text: row.p.mem; color: "#7b88a1"
+                                font.family: "JetBrains Mono"; font.pixelSize: 15 * stage.u
                             }
                         }
+                    }
+                    NumberAnimation { id: scrollAnim; target: procList; property: "contentY"; duration: 160; easing.type: Easing.OutCubic }
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+                        onWheel: function(wheel) {
+                            procList.nudge(-wheel.angleDelta.y / 120 * procList.rowStep * 2)
+                            wheel.accepted = true
+                        }
+                    }
+                    Rectangle {
+                        anchors.right: parent.right
+                        width: 3 * stage.u; radius: width / 2; color: "#88c0d0"; opacity: 0.55
+                        visible: procList.contentHeight > procList.height + 1
+                        readonly property real barH: Math.max(18 * stage.u, procList.height * procList.height / Math.max(1, procList.contentHeight))
+                        height: barH
+                        y: (procList.height - barH) * (procList.contentY / Math.max(1, procList.contentHeight - procList.height))
                     }
                 }
             }
@@ -542,7 +579,7 @@ PanelWindow {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom; anchors.bottomMargin: 14
-            text: "esc  ·  q  ·  click to close"
+            text: "esc  ·  q  ·  click to close   ·   ↑ ↓ or mouse wheel to browse processes"
             color: "#7b88a1"; font.family: "JetBrains Mono"; font.pixelSize: 12; font.letterSpacing: 2
             opacity: win.open ? 0.6 : 0
             Behavior on opacity { NumberAnimation { duration: 900 } }

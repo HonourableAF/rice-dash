@@ -126,7 +126,7 @@ Scope {
             a[1] += Number(p[9])
             a[2]++
         }
-        var keys = Object.keys(agg).sort(function (x, y) { return agg[y][0] - agg[x][0] }).slice(0, 4)
+        var keys = Object.keys(agg).sort(function (x, y) { return (agg[y][0] - agg[x][0]) || (agg[y][1] - agg[x][1]) })
         return keys.map(function (k) {
             var a = agg[k]
             return {
