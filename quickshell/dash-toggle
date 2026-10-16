@@ -1,0 +1,2 @@
+#!/bin/sh
+quickshell ipc call dash toggle >/dev/null 2>&1 || exec quickshell
