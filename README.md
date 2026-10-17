@@ -8,7 +8,7 @@ A Nord-themed system dashboard for Linux, in three parts:
 | --- | --- | --- | --- |
 | **Quickshell overlay** | [`quickshell/`](quickshell/) | QML only | You are on a Wayland desktop and want the lightest overlay. This is the recommended one. |
 | **Terminal dashboard** | [`dash.py`](dash.py) | Python, [Textual](https://textual.textualize.io/) | You want the stats inside a terminal pane. Works on X11 and Wayland. |
-| **PyQt overlay** (legacy) | [`dash-overlay.py`](dash-overlay.py) | Python, PyQt6, QML | You are on X11, or you do not want to install Quickshell. |
+| **PyQt overlay** | [`dash-overlay.py`](dash-overlay.py) | Python, PyQt6, QML | You are on X11 or Windows, or you do not want to install Quickshell. |
 
 The two overlays look the same and show the same stats. The Quickshell version is a port of the PyQt one with the Python layer removed.
 
@@ -118,7 +118,7 @@ Press `q` to quit. Colours are constants at the top of the file.
 
 Requires Linux with Python 3.10 or newer. On Arch-based systems: `sudo pacman -S --needed uv`.
 
-## PyQt overlay (legacy)
+## PyQt overlay (X11 and Windows)
 
 `dash-overlay.py` is the original overlay. It is a single file that `uv` runs the same way:
 
@@ -145,6 +145,34 @@ Categories=System;Monitor;
 ```
 
 How it works: `psutil` provides the stats, the overlay collects them once a second in Python and hands them to QML as a single object, and a second launch talks to the first over a local socket, which is how the toggle works.
+
+### Windows (experimental)
+
+The PyQt overlay runs on Windows. The Quickshell overlay does not, because Quickshell only exists for Wayland.
+
+Windows support is checked automatically: a GitHub Actions job starts the overlay on a Windows runner on every push. The author develops on Linux, so nobody has looked at it on a real Windows screen yet. Please open an issue if something looks wrong.
+
+```
+winget install astral-sh.uv
+git clone https://github.com/HonourableAF/rice-dash.git
+cd rice-dash
+uv run dash-overlay.py
+```
+
+Install the JetBrains Mono font first, or the layout falls back to another font.
+
+Differences from Linux:
+
+- **Now playing** needs a few extra packages. Run it like this to turn it on:
+
+```
+uv run --with winrt-runtime --with winrt-Windows.Media.Control --with winrt-Windows.Foundation --with winrt-Windows.Foundation.Collections dash-overlay.py
+```
+
+- **CPU temperature** shows a dash, because Windows does not expose it without extra tools.
+- **Top processes** leave out the System Idle Process.
+- **Shortcut:** use an [AutoHotkey](https://www.autohotkey.com/) v2 script, for example `^!d::Run 'uv run "C:\path\to\rice-dash\dash-overlay.py"', , 'Hide'`. Running it again closes the overlay.
+- **Known risk:** a fullscreen window with a see-through background can render oddly on some Windows setups.
 
 ## Customising
 

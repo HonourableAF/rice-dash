@@ -1,0 +1,19 @@
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install uv
+      - run: uv run dash-overlay.py --smoke
+      - name: with media support (optional)
+        continue-on-error: true
+        run: uv run --with winrt-runtime --with winrt-Windows.Media.Control --with winrt-Windows.Foundation --with winrt-Windows.Foundation.Collections dash-overlay.py --smoke

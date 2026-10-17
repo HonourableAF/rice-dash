@@ -13,18 +13,25 @@ Close with: Esc, q, or a click.  Optional: playerctl for the now-playing card.
 from __future__ import annotations
 
 import getpass
+import platform
 import socket
 import sys
+import threading
 import time
 from collections import deque
 
 import psutil
-from PyQt6.QtCore import QByteArray, QObject, QProcess, QTimer, QUrl, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QByteArray, QObject, QProcess, QTimer, QUrl, pyqtProperty, pyqtSignal, qInstallMessageHandler
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtQml import QQmlApplicationEngine
 
 SERVER_NAME = "rice-dash-overlay"
+IS_WIN = sys.platform == "win32"
+SMOKE = "--smoke" in sys.argv
+SKIP_NICS = ("docker", "veth", "br-", "virbr", "loopback", "vmware", "virtualbox", "isatap", "teredo")
+QML_ERRORS = ("TypeError", "ReferenceError", "is not a type", "Cannot assign", "Unable to assign", "Cannot read property", "is not defined")
+BAD_MESSAGES: list[str] = []
 MEDIA_FMT = "{{status}}\t{{playerName}}\t{{artist}}\t{{title}}\t{{position}}\t{{mpris:length}}"
 MEDIA_OFF = {"on": False, "playing": False, "title": "", "sub": "", "frac": 0.0, "time": "", "note": "nothing playing"}
 
@@ -49,6 +56,31 @@ def norm(hist: deque, floor: float) -> list[float]:
     return [v / hi for v in hist]
 
 
+def cpu_model() -> str:
+    if IS_WIN:
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+                return str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+        except OSError:
+            return platform.processor()
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor()
+
+
+def message_handler(_mode, _ctx, msg: str) -> None:
+    print(msg, file=sys.stderr)
+    if any(k in msg for k in QML_ERRORS):
+        BAD_MESSAGES.append(msg)
+
+
 class Stats(QObject):
     """Collects system stats once a second and hands them to QML as one map."""
 
@@ -66,17 +98,12 @@ class Stats(QObject):
         self.disks: list[dict] = []
         self.media = dict(MEDIA_OFF)
         self.no_playerctl = False
+        self.win_media = dict(MEDIA_OFF)
+        if IS_WIN:
+            threading.Thread(target=self.win_media_loop, daemon=True).start()
         self.freq_s = self.temp_s = "—"
 
-        self.model = ""
-        try:
-            with open("/proc/cpuinfo") as f:
-                for line in f:
-                    if line.startswith("model name"):
-                        self.model = line.split(":", 1)[1].strip()
-                        break
-        except OSError:
-            pass
+        self.model = cpu_model()
         try:
             self.who = f"{getpass.getuser()}@{socket.gethostname()}"
         except Exception:
@@ -103,7 +130,7 @@ class Stats(QObject):
     def net_counters() -> tuple[int, int]:
         rx = tx = 0
         for name, c in psutil.net_io_counters(pernic=True).items():
-            if name == "lo" or name.startswith(("docker", "veth", "br-", "virbr")):
+            if name == "lo" or name.lower().startswith(SKIP_NICS):
                 continue
             rx += c.bytes_recv
             tx += c.bytes_sent
@@ -123,8 +150,10 @@ class Stats(QObject):
     @staticmethod
     def top_procs(n: int = 4) -> list[dict]:
         agg: dict[str, list[float]] = {}
-        for p in psutil.process_iter(["name", "cpu_percent", "memory_percent"]):
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
             i = p.info
+            if i.get("pid") == 0:
+                continue
             a = agg.setdefault(i.get("name") or "?", [0.0, 0.0, 0])
             a[0] += i.get("cpu_percent") or 0.0
             a[1] += i.get("memory_percent") or 0.0
@@ -147,7 +176,7 @@ class Stats(QObject):
         pseudo = {"squashfs", "tmpfs", "devtmpfs", "overlay", "efivarfs", "vfat"}
         for p in psutil.disk_partitions():
             mp = p.mountpoint
-            if p.device in seen or p.fstype in pseudo:
+            if p.device in seen or p.fstype in pseudo or not p.fstype:
                 continue
             if mp.startswith(("/snap", "/boot", "/var/lib/docker", "/var/lib/containers")):
                 continue
@@ -168,6 +197,45 @@ class Stats(QObject):
             if len(out) == limit:
                 break
         return out
+
+    def win_media_loop(self) -> None:
+        try:
+            import asyncio
+
+            from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
+        except ImportError:
+            self.win_media = {**MEDIA_OFF, "note": "media: see README"}
+            return
+
+        async def read() -> dict:
+            mgr = await Manager.request_async()
+            ses = mgr.get_current_session()
+            if ses is None:
+                return dict(MEDIA_OFF)
+            props = await ses.try_get_media_properties_async()
+            info = ses.get_playback_info()
+            line = ses.get_timeline_properties()
+            end = line.end_time.total_seconds() - line.start_time.total_seconds()
+            pos = line.position.total_seconds() - line.start_time.total_seconds()
+            frac = pos / end if end > 0 else 0.0
+            tm = f"{mmss(int(pos * 1_000_000))} / {mmss(int(end * 1_000_000))}" if end > 0 else ""
+            player = (ses.source_app_user_model_id or "").removesuffix(".exe")
+            return {
+                "on": True,
+                "playing": int(info.playback_status) == 4,
+                "title": props.title or "Unknown",
+                "sub": f"{props.artist or '—'}  ·  {player}",
+                "frac": max(0.0, min(1.0, frac)),
+                "time": tm,
+                "note": "",
+            }
+
+        while True:
+            try:
+                self.win_media = asyncio.run(read())
+            except Exception:
+                self.win_media = dict(MEDIA_OFF)
+            time.sleep(2)
 
     def poll_media(self) -> None:
         if self.no_playerctl or self.proc.state() != QProcess.ProcessState.NotRunning:
@@ -232,7 +300,9 @@ class Stats(QObject):
             self.procs = self.top_procs()
         if self.n % 10 == 1 or not self.disks:
             self.disks = self.read_disks()
-        if self.n % 2 == 0:
+        if IS_WIN:
+            self.media = self.win_media
+        elif self.n % 2 == 0:
             self.poll_media()
 
         secs = int(time.time() - psutil.boot_time())
@@ -825,24 +895,39 @@ Window {
 '''
 
 
+def finish_smoke(app: QGuiApplication, stats: Stats) -> None:
+    d = stats._d
+    ok = "cpu" in d and not BAD_MESSAGES
+    keys = ("cpuText", "ramPct", "down", "model", "uptime", "temp")
+    print("smoke:", "ok" if ok else "FAILED", {k: d.get(k) for k in keys})
+    for m in BAD_MESSAGES:
+        print("qml error:", m)
+    app.exit(0 if ok else 1)
+
+
 def main() -> int:
-    app = QGuiApplication(sys.argv)
+    if SMOKE:
+        qInstallMessageHandler(message_handler)
+    app = QGuiApplication([a for a in sys.argv if a != "--smoke"])
     app.setApplicationName("rice-dash")
     app.setDesktopFileName("rice-dash")
 
-    sock = QLocalSocket()
-    sock.connectToServer(SERVER_NAME)
-    if sock.waitForConnected(150):
-        sock.write(b"toggle")
-        sock.flush()
-        sock.waitForBytesWritten(300)
-        return 0
-    QLocalServer.removeServer(SERVER_NAME)
-    server = QLocalServer()
-    server.listen(SERVER_NAME)
+    server = None
+    if not SMOKE:
+        sock = QLocalSocket()
+        sock.connectToServer(SERVER_NAME)
+        if sock.waitForConnected(150):
+            sock.write(b"toggle")
+            sock.flush()
+            sock.waitForBytesWritten(300)
+            return 0
+        QLocalServer.removeServer(SERVER_NAME)
+        server = QLocalServer()
+        server.listen(SERVER_NAME)
 
     stats = Stats()
-    server.newConnection.connect(lambda: (server.nextPendingConnection(), stats.toggleRequested.emit()))
+    if server is not None:
+        server.newConnection.connect(lambda: (server.nextPendingConnection(), stats.toggleRequested.emit()))
 
     engine = QQmlApplicationEngine()
     engine.quit.connect(app.quit)
@@ -850,6 +935,8 @@ def main() -> int:
     engine.loadData(QByteArray(QML.encode()), QUrl("file:///rice-dash.qml"))
     if not engine.rootObjects():
         return 1
+    if SMOKE:
+        QTimer.singleShot(3000, lambda: finish_smoke(app, stats))
     return app.exec()
 
 
