@@ -163,7 +163,7 @@ Press `q` to quit. Colours are constants at the top of the file. It needs Python
 
 The PyQt overlay runs on Windows. The Quickshell overlay does not, because Quickshell only exists for Wayland.
 
-This has been tested in a Windows 11 virtual machine, not on real Windows hardware yet. If something looks wrong, please open an issue.
+Windows 10 or newer is required (Qt 6 does not support Windows 7 or 8). This has been tested in a Windows 11 virtual machine, not on real Windows hardware yet. If something looks wrong, please open an issue.
 
 ### Run it
 
