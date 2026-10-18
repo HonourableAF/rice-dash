@@ -16,4 +16,4 @@ jobs:
       - run: uv run dash-overlay.py --smoke
       - name: with media support (optional)
         continue-on-error: true
-        run: uv run --with winrt-runtime --with winrt-Windows.Media.Control --with winrt-Windows.Foundation --with winrt-Windows.Foundation.Collections dash-overlay.py --smoke
+        run: uv run --python 3.12 --with winrt-runtime --with winrt-Windows.Media.Control --with winrt-Windows.Foundation --with winrt-Windows.Foundation.Collections dash-overlay.py --smoke
